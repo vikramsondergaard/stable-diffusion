@@ -270,18 +270,48 @@ class SpatialVideoTransformer(SpatialTransformer):
     def forward(self, x, context=None):
         b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
         x_in = x
+        x = rearrange(x, 'b n c h w -> (b n) c h w')
         x = self.norm(x)
         x = self.proj_in(x)
-        x = rearrange(x, 'b n c h w -> (b n) c h w')
+        x = rearrange(x, '(b n) c h w -> (b n) (h w) c', b=b, n=n)
         for block in self.transformer_blocks:
             x = block(x, context=context)
-        x = rearrange(x, '(b n) c h w -> b n c h w', b=b, n=n)
+        x = rearrange(x, '(b n) (h w) c -> (b n) c h w', b=b, n=n, h=h, w=w)
         x = self.proj_out(x)
+        x = rearrange(x, '(b n) c h w -> b n c h w', b=b, n=n)
         return x + x_in
 
 
-class TemporalVideoTransformer(nn.Module):
+class TemporalVideoTransformer(SpatialTransformer):
+
 
     def __init__(self, in_channels, n_heads, d_head,
                  depth=1, dropout=0., context_dim=None):
         super().__init__()
+
+        self.proj_in = nn.Conv1d(in_channels,
+                                 inner_dim,
+                                 kernel_size=1,
+                                 stride=1,
+                                 padding=0)
+
+        self.proj_out = zero_module(nn.Conv1d(in_channels,
+                                    inner_dim,
+                                    kernel_size=1,
+                                    stride=1,
+                                    padding=0))
+    
+
+    def forward(self, x, emb):
+        b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
+        x_in = x
+        x = rearrange(x, 'b n c h w -> (b h w) c n')
+        x = self.norm(x)
+        x = self.proj_in(x)
+        x = rearrange(x, '(b h w) c n -> (b h w) n c', b=b, h=h, w=w)
+        for block in self.transformer_blocks:
+            x = block(x, context=context)
+        x = rearrange(x, '(b h w) n c -> (b h w) c n', b=b, h=h, w=w)
+        x = self.proj_out(x)
+        x = rearrange(x, '(b h w) c n -> b n c h w', b=b, h=h, w=w)
+        return x + x_in
