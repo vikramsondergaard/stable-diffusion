@@ -287,7 +287,7 @@ class VideoResBlock(ResBlock):
         up=False,
         down=False,
     ):
-        super.__init__()
+        super().__init__()
 
         self.in_layers = nn.Sequential(
             normalization(channels),
@@ -419,7 +419,7 @@ class VideoSpatialAttentionBlock(AttentionBlock):
         use_checkpoint=False,
         use_new_attention_order=False,
     ):
-        super.__init__()
+        super().__init__()
 
 
     def _forward(self, x):
@@ -441,7 +441,7 @@ class VideoTemporalAttentionBlock(AttentionBlock):
         use_checkpoint=False,
         use_new_attention_order=False,
     ):
-        super.__init__()
+        super().__init__()
 
     def _forward(self, x):
         b, n, c, h, w = x.shape  # note the 'n' added for video frames here
@@ -1090,7 +1090,7 @@ class EncoderUNetModel(nn.Module):
 class VideoDownsample(Downsample):
 
     def __init__(self, channels, use_conv, dims=3, out_channels=None,padding=1):
-        super.__init__()
+        super().__init__()
         if use_conv:
             self.op = conv_nd(
                 dims, self.channels, self.out_channels, (1, 3, 3), stride=stride, padding=padding
@@ -1099,7 +1099,7 @@ class VideoDownsample(Downsample):
 class VideoUpsample(Upsample):
 
     def __init__(self, channels, use_conv, dims=3, out_channels=None, padding=1):
-        super.__init__()
+        super().__init__()
         if use_conv:
             self.conv = conv_nd(dims, self.channels, self.out_channels, (1, 3, 3), padding=padding)
 
@@ -1116,7 +1116,8 @@ class VideoUNetModel(nn.Module):
         attention_resolutions,
         dropout=0,
         channel_mult=(1, 2, 4, 8),
-        conv_resample=True,            
+        conv_resample=True,  
+        dims=3,          
         num_classes=None,
         use_checkpoint=False,
         use_fp16=False,
@@ -1126,18 +1127,18 @@ class VideoUNetModel(nn.Module):
         use_scale_shift_norm=False,
         resblock_updown=False,
         use_new_attention_order=False,
-        use_spatial_transformer=False,    # custom transformer support
+        use_transformers=False,    # custom transformer support
         transformer_depth=1,              # custom transformer support
         context_dim=None,                 # custom transformer support
         n_embed=None,                     # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
     ):
-        super.__init__()
-        if use_spatial_transformer:
+        super().__init__()
+        if use_transformers:
             assert context_dim is not None, 'Fool!! You forgot to include the dimension of your cross-attention conditioning...'
 
         if context_dim is not None:
-            assert use_spatial_transformer, 'Fool!! You forgot to use the spatial transformer for your cross-attention conditioning...'
+            assert use_transformers, 'Fool!! You forgot to use the spatial transformer for your cross-attention conditioning...'
             from omegaconf.listconfig import ListConfig
             if type(context_dim) == ListConfig:
                 context_dim = list(context_dim)
@@ -1168,8 +1169,6 @@ class VideoUNetModel(nn.Module):
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
 
-        dims = 3
-
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -1183,7 +1182,7 @@ class VideoUNetModel(nn.Module):
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
-                    conv_nd(dims, in_channels, model_channels, (1, 3, 3), padding=1)
+                    conv_nd(dims, in_channels, model_channels, 3, padding=1)
                 )
             ]
         )
@@ -1194,7 +1193,7 @@ class VideoUNetModel(nn.Module):
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 layers = [
-                    3DResBlock(
+                    VideoResBlock(
                         ch,
                         time_embed_dim,
                         dropout,
@@ -1232,7 +1231,7 @@ class VideoUNetModel(nn.Module):
                 out_ch = ch
                 self.input_blocks.append(
                     TimestepEmbedSequential(
-                        3DResBlock(
+                        VideoResBlock(
                             ch,
                             time_embed_dim,
                             dropout,
@@ -1243,7 +1242,7 @@ class VideoUNetModel(nn.Module):
                             down=True,
                         )
                         if resblock_updown
-                        else 3DDownsample(
+                        else VideoDownsample(
                             ch, conv_resample, dims=dims, out_channels=out_ch
                         )
                     )
@@ -1262,7 +1261,7 @@ class VideoUNetModel(nn.Module):
             #num_heads = 1
             dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
         self.middle_block = TimestepEmbedSequential(
-            3DResBlock(
+            VideoResBlock(
                 ch,
                 time_embed_dim,
                 dropout,
@@ -1279,7 +1278,7 @@ class VideoUNetModel(nn.Module):
             ) if not use_spatial_transformer else SpatialTransformer(
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         ),
-            3DResBlock(
+            VideoResBlock(
                 ch,
                 time_embed_dim,
                 dropout,
@@ -1295,7 +1294,7 @@ class VideoUNetModel(nn.Module):
             for i in range(num_res_blocks + 1):
                 ich = input_block_chans.pop()
                 layers = [
-                    3DResBlock(
+                    VideoResBlock(
                         ch + ich,
                         time_embed_dim,
                         dropout,
@@ -1329,7 +1328,7 @@ class VideoUNetModel(nn.Module):
                 if level and i == num_res_blocks:
                     out_ch = ch
                     layers.append(
-                        3DResBlock(
+                        VideoResBlock(
                             ch,
                             time_embed_dim,
                             dropout,
@@ -1340,7 +1339,7 @@ class VideoUNetModel(nn.Module):
                             up=True,
                         )
                         if resblock_updown
-                        else 3DUpsample(ch, conv_resample, dims=dims, out_channels=out_ch)
+                        else VideoUpsample(ch, conv_resample, dims=dims, out_channels=out_ch)
                     )
                     ds //= 2
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
