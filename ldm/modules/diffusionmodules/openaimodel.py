@@ -7,6 +7,7 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
 
 from ldm.modules.diffusionmodules.util import (
     checkpoint,
@@ -332,9 +333,31 @@ class VideoSpatialAttentionBlock(AttentionBlock):
     ):
         super.__init__()
 
+
     def _forward(self, x):
         b, n, c, *spatial = x.shape  # note the 'n' added for video frames here
         x = x.reshape(b * n, c, -1)
+        qkv = self.qkv(self.norm(x))
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).reshape(b, n, c, *spatial)
+
+
+class VideoTemporalAttentionBlock(AttentionBlock):
+
+    def __init__(
+        self,
+        channels,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        use_new_attention_order=False,
+    ):
+        super.__init__()
+
+    def _forward(self, x):
+        b, n, c, h, w = x.shape  # note the 'n' added for video frames here
+        x = x.rearrange('b n c h w -> (b h w) n c')
         qkv = self.qkv(self.norm(x))
         h = self.attention(qkv)
         h = self.proj_out(h)
