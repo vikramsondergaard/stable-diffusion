@@ -272,6 +272,94 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
+class VideoResBlock(ResBlock):
+
+    def __init__(
+        self,
+        channels,
+        emb_channels,
+        dropout,
+        out_channels=None,
+        use_conv=False,
+        use_scale_shift_norm=False,
+        dims=2,
+        use_checkpoint=False,
+        up=False,
+        down=False,
+    ):
+        super.__init__()
+
+        self.in_layers = nn.Sequential(
+            normalization(channels),
+            nn.SiLU(),
+            conv_nd(dims, channels, self.out_channels, 3, padding=1), # spatial convolution
+            conv_nd(dims - 1, channnels, self.out_channels, 3, padding=1) # temporal convolution
+        )
+
+        if up:
+            self.h_upd = VideoUpsample(channels, False, dims)
+            self.x_upd = VideoUpsample(channels, False, dims)
+        elif down:
+            self.h_upd = VideoDownsample(channels, False, dims)
+            self.x_upd = VideoDownsample(channels, False, dims)
+
+        self.out_layers = nn.Sequential(
+            normalization(self.out_channels),
+            nn.SiLU(),
+            nn.Dropout(p=dropout),
+            zero_module(
+                conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1) # spatial convolution
+            ),
+            zero_module(
+                conv_nd(dims - 1, self.out_channels, self.out_channels, 3, padding=1) # temporal convolution
+            )
+        )
+
+    
+    def _forward(self, x, emb):
+        b, n, c, *spatial = x.shape
+        x = x.reshape(b * n, c, *spatial)
+        in_rest, in_space_conv, in_time_conv = self.in_layers[:-2], self.in_layers[-2], self.in_layers[-1]
+        h = in_rest(x)
+        if self.updown:
+            h = self.h_upd(h)
+            x = self.x_upd(x)
+        h = in_space_conv(h)
+        _, c, height, width = h.shape
+        h = h.reshape(b * height * width, c, n)
+        h = in_time_conv(h)
+        _, c, *spatial = h.shape
+        h = h.reshape(b, n, c, *spatial)
+
+        emb_out = self.emb_layers(emb).type(h.dtype)
+
+        while len(emb_out.shape) < len(h.shape):
+            emb_out = emb_out[..., None]
+
+        out_norm = self.out_layers[0]
+        out_space_conv = self.out_layers[-2]
+        out_time_conv = self.out_layers[-1]
+        out_rest = self.out_layers[1:-2]
+        if self.use_scale_shift_norm:
+            scale, shift = th.chunk(emb_out, 2, dim=1)
+            h = out_norm(h) * (1 + scale) + shift
+        else:
+            h = h + emb_out
+            h = self.out_norm(h)
+        h = out_rest(h)
+        b, n, c, *spatial = h.shape
+        h = h.reshape(b * n, c, *spatial)
+        h = out_space_conv(h)
+        _, c, height, width = h.shape
+        h = h.reshape(b * height * width, c, n)
+        h = out_time_conv(h)
+        _, c, *spatial = h.shape
+        h = h.reshape(b, n, c, *spatial)
+        _, c, *spatial = x.shape
+        x = x.reshape(b, n, c, *spatial)
+        return self.skip_connection(x) + h
+
+
 class AttentionBlock(nn.Module):
     """
     An attention block that allows spatial positions to attend to each other.
@@ -357,11 +445,11 @@ class VideoTemporalAttentionBlock(AttentionBlock):
 
     def _forward(self, x):
         b, n, c, h, w = x.shape  # note the 'n' added for video frames here
-        x = x.rearrange('b n c h w -> (b h w) n c')
+        x = x.reshape(b * h * w, -1)
         qkv = self.qkv(self.norm(x))
         h = self.attention(qkv)
         h = self.proj_out(h)
-        return (x + h).reshape(b, n, c, *spatial)
+        return (x + h).reshape(b, n, c, h, w)
 
 
 def count_flops_attn(model, _x, y):
@@ -999,59 +1087,7 @@ class EncoderUNetModel(nn.Module):
             h = h.type(x.dtype)
             return self.out(h)
 
-
-class 3DResBlock(ResBlock):
-    def __init__(
-        self,
-        channels,
-        emb_channels,
-        dropout,
-        out_channels=None,
-        use_conv=False,
-        use_scale_shift_norm=False,
-        dims=3,
-        use_checkpoint=False,
-        up=False,
-        down=False
-    ):
-        super.__init__()
-        self.in_layers = nn.Sequential(
-            normalization(channels),
-            nn.SiLU(),
-            conv_nd(dims, channels, self.out_channels, (1, 3, 3), padding=1),
-        )
-
-        self.updown = up or down
-
-        if up:
-            self.h_upd = 3DUpsample(channels, False, dims)
-            self.x_upd = 3DUpsample(channels, False, dims)
-        elif down:
-            self.h_upd = 3DDownsample(channels, False, dims)
-            self.x_upd = 3DDownsample(channels, False, dims)
-        else:
-            self.h_upd = self.x_upd = nn.Identity()
-
-        self.out_layers = nn.Sequential(
-            normalization(self.out_channels),
-            nn.SiLU(),
-            nn.Dropout(p=dropout),
-            zero_module(
-                conv_nd(dims, self.out_channels, self.out_channels, (1, 3, 3), padding=1)
-            ),
-        )
-
-        if self.out_channels == channels:
-            self.skip_connection = nn.Identity()
-        elif use_conv:
-            self.skip_connection = conv_nd(
-                dims, channels, self.out_channels, (1, 3, 3), padding=1
-            )
-        else:
-            self.skip_connection = conv_nd(dims, channels, self.out_channels, 1)
-
-
-class 3DDownsample(Downsample):
+class VideoDownsample(Downsample):
 
     def __init__(self, channels, use_conv, dims=3, out_channels=None,padding=1):
         super.__init__()
@@ -1060,7 +1096,7 @@ class 3DDownsample(Downsample):
                 dims, self.channels, self.out_channels, (1, 3, 3), stride=stride, padding=padding
             )
 
-class 3DUpsample(Upsample):
+class VideoUpsample(Upsample):
 
     def __init__(self, channels, use_conv, dims=3, out_channels=None, padding=1):
         super.__init__()
@@ -1068,7 +1104,7 @@ class 3DUpsample(Upsample):
             self.conv = conv_nd(dims, self.channels, self.out_channels, (1, 3, 3), padding=padding)
 
 
-class 3DUNetModel(nn.Module):
+class VideoUNetModel(nn.Module):
 
     def __init__(
         self,
