@@ -320,6 +320,27 @@ class AttentionBlock(nn.Module):
         return (x + h).reshape(b, c, *spatial)
 
 
+class VideoSpatialAttentionBlock(AttentionBlock):
+
+    def __init__(
+        self,
+        channels,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        use_new_attention_order=False,
+    ):
+        super.__init__()
+
+    def _forward(self, x):
+        b, n, c, *spatial = x.shape  # note the 'n' added for video frames here
+        x = x.reshape(b * n, c, -1)
+        qkv = self.qkv(self.norm(x))
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).reshape(b, n, c, *spatial)
+
+
 def count_flops_attn(model, _x, y):
     """
     A counter for the `thop` package to count the operations in an
@@ -980,11 +1001,11 @@ class 3DResBlock(ResBlock):
         self.updown = up or down
 
         if up:
-            self.h_upd = Upsample(channels, False, dims)
-            self.x_upd = Upsample(channels, False, dims)
+            self.h_upd = 3DUpsample(channels, False, dims)
+            self.x_upd = 3DUpsample(channels, False, dims)
         elif down:
-            self.h_upd = Downsample(channels, False, dims)
-            self.x_upd = Downsample(channels, False, dims)
+            self.h_upd = 3DDownsample(channels, False, dims)
+            self.x_upd = 3DDownsample(channels, False, dims)
         else:
             self.h_upd = self.x_upd = nn.Identity()
 
