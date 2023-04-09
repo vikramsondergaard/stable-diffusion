@@ -284,7 +284,6 @@ class SpatialVideoTransformer(SpatialTransformer):
 
 class TemporalVideoTransformer(SpatialTransformer):
 
-
     def __init__(self, in_channels, n_heads, d_head,
                  depth=1, dropout=0., context_dim=None):
         super().__init__()
@@ -300,7 +299,6 @@ class TemporalVideoTransformer(SpatialTransformer):
                                     kernel_size=1,
                                     stride=1,
                                     padding=0))
-    
 
     def forward(self, x, emb):
         b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
