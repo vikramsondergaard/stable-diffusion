@@ -18,7 +18,7 @@ from ldm.modules.diffusionmodules.util import (
     normalization,
     timestep_embedding,
 )
-from ldm.modules.attention import SpatialTransformer
+from ldm.modules.attention import SpatialTransformer, SpatialVideoTransformer, TemporalVideoTransformer
 
 
 # dummy replace
@@ -1212,15 +1212,26 @@ class VideoUNetModel(nn.Module):
                         dim_head = num_head_channels
                     if legacy:
                         #num_heads = 1
-                        dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+                        dim_head = ch // num_heads if use_transformers else num_head_channels
                     layers.append(
-                        AttentionBlock(
+                        VideoSpatialAttentionBlock(
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
-                        ) if not use_spatial_transformer else SpatialTransformer(
+                        ) if not use_transformers else SpatialVideoTransformer(
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                        )
+                    )
+                    layers.append(
+                        VideoTemporalAttentionBlock(
+                            ch,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads,
+                            num_head_channels=dim_head,
+                            use_new_attention_order=use_new_attention_order,
+                        ) if not use_transformers else TemporalVideoTransformer(
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         )
                     )
@@ -1259,7 +1270,7 @@ class VideoUNetModel(nn.Module):
             dim_head = num_head_channels
         if legacy:
             #num_heads = 1
-            dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+            dim_head = ch // num_heads if use_transformers else num_head_channels
         self.middle_block = TimestepEmbedSequential(
             VideoResBlock(
                 ch,
@@ -1269,13 +1280,22 @@ class VideoUNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            AttentionBlock(
+            VideoSpatialAttentionBlock(
                 ch,
                 use_checkpoint=use_checkpoint,
                 num_heads=num_heads,
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
-            ) if not use_spatial_transformer else SpatialTransformer(
+            ) if not use_transformers else SpatialVideoTransformer(
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                        ),
+            VideoTemporalAttentionBlock(
+                ch,
+                use_checkpoint=use_checkpoint,
+                num_heads=num_heads,
+                num_head_channels=dim_head,
+                use_new_attention_order=use_new_attention_order,
+            ) if not use_transformers else TemporalVideoTransformer(
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         ),
             VideoResBlock(
@@ -1313,15 +1333,26 @@ class VideoUNetModel(nn.Module):
                         dim_head = num_head_channels
                     if legacy:
                         #num_heads = 1
-                        dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+                        dim_head = ch // num_heads if use_transformers else num_head_channels
                     layers.append(
-                        AttentionBlock(
+                        VideoSpatialAttentionBlock(
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
-                        ) if not use_spatial_transformer else SpatialTransformer(
+                        ) if not use_transformers else SpatialVideoTransformer(
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                        )
+                    )
+                    layers.append(
+                        VideoTemporalAttentionBlock(
+                            ch,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads_upsample,
+                            num_head_channels=dim_head,
+                            use_new_attention_order=use_new_attention_order,
+                        ) if not use_transformers else TemporalVideoTransformer(
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         )
                     )
@@ -1348,7 +1379,8 @@ class VideoUNetModel(nn.Module):
         self.out = nn.Sequential(
             normalization(ch),
             nn.SiLU(),
-            zero_module(conv_nd(dims, model_channels, out_channels, (1, 3, 3), padding=1)),
+            zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
+            zero_module(conv_nd(dims - 1, model_channels, out_channels, 3, padding=1))
         )
         if self.predict_codebook_ids:
             self.id_predictor = nn.Sequential(
