@@ -148,6 +148,10 @@ class Downsample(nn.Module):
         self.use_conv = use_conv
         self.dims = dims
         stride = 2 if dims != 3 else (1, 2, 2)
+        if use_conv:
+            self.op = conv_nd(
+                dims, self.channels, self.out_channels, 3, stride=stride, padding=padding
+            )
         else:
             assert self.channels == self.out_channels
             self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
@@ -287,13 +291,24 @@ class VideoResBlock(ResBlock):
         up=False,
         down=False,
     ):
-        super().__init__()
+        super().__init__(
+            channels, 
+            emb_channels, 
+            dropout,
+            out_channels=out_channels,
+            use_conv=use_conv,
+            use_scale_shift_norm=use_scale_shift_norm,
+            dims=dims,
+            use_checkpoint=use_checkpoint,
+            up=up,
+            down=down
+        )
 
         self.in_layers = nn.Sequential(
             normalization(channels),
             nn.SiLU(),
             conv_nd(dims, channels, self.out_channels, 3, padding=1), # spatial convolution
-            conv_nd(dims - 1, channnels, self.out_channels, 3, padding=1) # temporal convolution
+            conv_nd(dims - 1, channels, self.out_channels, 3, padding=1) # temporal convolution
         )
 
         if up:
@@ -317,21 +332,20 @@ class VideoResBlock(ResBlock):
 
     
     def _forward(self, x, emb):
-        b, n, c, *spatial = x.shape
-        x = x.reshape(b * n, c, *spatial)
+        # Have to use `y` instead of `h` to avoid variable shadowing
+        b, n, c, h, w = x.shape
+        x = rearrange('b n c h w -> (b n) c h w')
         in_rest, in_space_conv, in_time_conv = self.in_layers[:-2], self.in_layers[-2], self.in_layers[-1]
-        h = in_rest(x)
+        y = in_rest(x)
         if self.updown:
-            h = self.h_upd(h)
+            y = self.h_upd(y)
             x = self.x_upd(x)
-        h = in_space_conv(h)
-        _, c, height, width = h.shape
-        h = h.reshape(b * height * width, c, n)
-        h = in_time_conv(h)
-        _, c, *spatial = h.shape
-        h = h.reshape(b, n, c, *spatial)
+        y = in_space_conv(y)
+        y = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+        y = in_time_conv(y)
+        y = rearrange('(b h w) c n -> b n c h w', b=b, h=h, w=w)
 
-        emb_out = self.emb_layers(emb).type(h.dtype)
+        emb_out = self.emb_layers(emb).type(y.dtype)
 
         while len(emb_out.shape) < len(h.shape):
             emb_out = emb_out[..., None]
@@ -342,22 +356,19 @@ class VideoResBlock(ResBlock):
         out_rest = self.out_layers[1:-2]
         if self.use_scale_shift_norm:
             scale, shift = th.chunk(emb_out, 2, dim=1)
-            h = out_norm(h) * (1 + scale) + shift
+            y = out_norm(h) * (1 + scale) + shift
         else:
-            h = h + emb_out
-            h = self.out_norm(h)
-        h = out_rest(h)
-        b, n, c, *spatial = h.shape
-        h = h.reshape(b * n, c, *spatial)
-        h = out_space_conv(h)
-        _, c, height, width = h.shape
-        h = h.reshape(b * height * width, c, n)
-        h = out_time_conv(h)
-        _, c, *spatial = h.shape
-        h = h.reshape(b, n, c, *spatial)
+            y = y + emb_out
+            y = self.out_norm(y)
+        y = out_rest(y)
+        y = rearrange('b n c h w -> (b n) c h w')
+        y = out_space_conv(y)
+        y = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+        y = out_time_conv(y)
+        y = rearrange('(b h w) c n -> b n c h w', b=b, h=h, w=w)
         _, c, *spatial = x.shape
-        x = x.reshape(b, n, c, *spatial)
-        return self.skip_connection(x) + h
+        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+        return self.skip_connection(x) + y
 
 
 class AttentionBlock(nn.Module):
@@ -1089,19 +1100,53 @@ class EncoderUNetModel(nn.Module):
 
 class VideoDownsample(Downsample):
 
-    def __init__(self, channels, use_conv, dims=3, out_channels=None,padding=1):
-        super().__init__()
+    def __init__(self, channels, use_conv, dims=2, out_channels=None,padding=1):
+        super().__init__(channels, use_conv, dims=dims, out_channels=out_channels, padding=padding)
+        stride = 2 if dims != 3 else (1, 2, 2)
         if use_conv:
-            self.op = conv_nd(
-                dims, self.channels, self.out_channels, (1, 3, 3), stride=stride, padding=padding
+            self.space_op = conv_nd(
+                dims, self.channels, self.out_channels, 3, stride=stride, padding=padding
             )
+            self.time_op = conv_nd(
+                dims - 1, self.channels, self.out_channels, 3, stride=stride, padding=padding
+            )
+
+    def forward(self, x):
+        b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
+        x = rearrange('b n c h w -> (b n) c h w')
+        assert x.shape[1] == self.channels
+        if self.use_conv:
+            x = self.space_op(x)
+            x = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+            x = self.time_op(x)
+            x = rearrange('(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
+        else:
+            x = self.op(x)
+        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+        return x
+
+
 
 class VideoUpsample(Upsample):
 
-    def __init__(self, channels, use_conv, dims=3, out_channels=None, padding=1):
-        super().__init__()
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, padding=1):
+        super().__init__(channels, use_conv, dims=dims, out_channels=out_channels, padding=padding)
         if use_conv:
-            self.conv = conv_nd(dims, self.channels, self.out_channels, (1, 3, 3), padding=padding)
+            self.space_conv = conv_nd(dims, self.channels, self.out_channels, 3, padding=padding)
+            self.time_conv = conv_nd(dims - 1, self.channels, self.out_channels, 3, padding=padding)
+
+    def forward(self, x):
+        b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
+        x = rearrange('b n c h w -> (b n) c h w')
+        assert x.shape[1] == self.channels
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
+        if self.use_conv:
+            x = self.space_conv(x)
+            x = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+            x = self.time_conv(x)
+            x = rearrange('(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
+        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+        return x
 
 
 class VideoUNetModel(nn.Module):
