@@ -334,16 +334,16 @@ class VideoResBlock(ResBlock):
     def _forward(self, x, emb):
         # Have to use `y` instead of `h` to avoid variable shadowing
         b, n, c, h, w = x.shape
-        x = rearrange('b n c h w -> (b n) c h w')
+        x = rearrange(x, 'b n c h w -> (b n) c h w')
         in_rest, in_space_conv, in_time_conv = self.in_layers[:-2], self.in_layers[-2], self.in_layers[-1]
         y = in_rest(x)
         if self.updown:
             y = self.h_upd(y)
             x = self.x_upd(x)
         y = in_space_conv(y)
-        y = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+        y = rearrange(y, '(b n) c h w -> (b h w) c n', b=b, n=n)
         y = in_time_conv(y)
-        y = rearrange('(b h w) c n -> b n c h w', b=b, h=h, w=w)
+        y = rearrange(y, '(b h w) c n -> b n c h w', b=b, h=h, w=w)
 
         emb_out = self.emb_layers(emb).type(y.dtype)
 
@@ -361,13 +361,13 @@ class VideoResBlock(ResBlock):
             y = y + emb_out
             y = self.out_norm(y)
         y = out_rest(y)
-        y = rearrange('b n c h w -> (b n) c h w')
+        y = rearrange(y, 'b n c h w -> (b n) c h w')
         y = out_space_conv(y)
-        y = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+        y = rearrange(y, '(b n) c h w -> (b h w) c n', b=b, n=n)
         y = out_time_conv(y)
-        y = rearrange('(b h w) c n -> b n c h w', b=b, h=h, w=w)
+        y = rearrange(y, '(b h w) c n -> b n c h w', b=b, h=h, w=w)
         _, c, *spatial = x.shape
-        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+        x = rearrange(x, '(b n) c h w -> b n c h w', b=b, n=n)
         return self.skip_connection(x) + y
 
 
@@ -1113,16 +1113,16 @@ class VideoDownsample(Downsample):
 
     def forward(self, x):
         b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
-        x = rearrange('b n c h w -> (b n) c h w')
+        x = rearrange(x, 'b n c h w -> (b n) c h w')
         assert x.shape[1] == self.channels
         if self.use_conv:
             x = self.space_op(x)
-            x = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+            x = rearrange(x, '(b n) c h w -> (b h w) c n', b=b, n=n)
             x = self.time_op(x)
-            x = rearrange('(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
+            x = rearrange(x, '(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
         else:
             x = self.op(x)
-        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+        x = rearrange(x, '(b n) c h w -> b n c h w', b=b, n=n)
         return x
 
 
@@ -1137,15 +1137,15 @@ class VideoUpsample(Upsample):
 
     def forward(self, x):
         b, n, c, h, w = x.shape  # NB now we also have number of frames to contend with
-        x = rearrange('b n c h w -> (b n) c h w')
+        x = rearrange(x, 'b n c h w -> (b n) c h w')
         assert x.shape[1] == self.channels
         x = F.interpolate(x, scale_factor=2, mode="nearest")
         if self.use_conv:
             x = self.space_conv(x)
-            x = rearrange('(b n) c h w -> (b h w) c n', b=b, n=n)
+            x = rearrange(x, '(b n) c h w -> (b h w) c n', b=b, n=n)
             x = self.time_conv(x)
-            x = rearrange('(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
-        x = rearrange('(b n) c h w -> b n c h w', b=b, n=n)
+            x = rearrange(x, '(b h w) c n -> (b n) c h w', b=b, h=h, w=w)
+        x = rearrange(x, '(b n) c h w -> b n c h w', b=b, n=n)
         return x
 
 
@@ -1162,7 +1162,7 @@ class VideoUNetModel(nn.Module):
         dropout=0,
         channel_mult=(1, 2, 4, 8),
         conv_resample=True,  
-        dims=3,          
+        dims=2,          
         num_classes=None,
         use_checkpoint=False,
         use_fp16=False,
