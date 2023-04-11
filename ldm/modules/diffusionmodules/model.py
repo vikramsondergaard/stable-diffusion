@@ -434,6 +434,8 @@ class Encoder(nn.Module):
     def forward(self, x):
         # timestep embedding
         temb = None
+        b, n, c, l, w = x.shape
+        x = rearrange(x, 'b n c l w -> (b n) c l w')
 
         # downsampling
         hs = [self.conv_in(x)]
@@ -456,6 +458,7 @@ class Encoder(nn.Module):
         h = self.norm_out(h)
         h = nonlinearity(h)
         h = self.conv_out(h)
+        h = rearrange(x, '(b n) c l w -> b n c l w', b=b, n=n)
         return h
 
 

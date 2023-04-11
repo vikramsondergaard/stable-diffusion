@@ -430,7 +430,7 @@ class VideoSpatialAttentionBlock(AttentionBlock):
         use_checkpoint=False,
         use_new_attention_order=False,
     ):
-        super().__init__()
+        super().__init__(channels, num_heads=num_heads, num_head_channels=num_head_channels, use_checkpoint=use_checkpoint, use_new_attention_order=use_new_attention_order)
 
 
     def _forward(self, x):
@@ -452,7 +452,7 @@ class VideoTemporalAttentionBlock(AttentionBlock):
         use_checkpoint=False,
         use_new_attention_order=False,
     ):
-        super().__init__()
+        super().__init__(channels, num_heads=num_heads, num_head_channels=num_head_channels, use_checkpoint=use_checkpoint, use_new_attention_order=use_new_attention_order)
 
     def _forward(self, x):
         b, n, c, h, w = x.shape  # note the 'n' added for video frames here
