@@ -1,0 +1,5 @@
+data/tiktok_videos/**
+scripts/download_first_stages.sh
+scripts/download_models.sh
+models/**
+**/__pycache__/**
