@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from contextlib import contextmanager
@@ -7,6 +8,8 @@ from ldm.modules.diffusionmodules.model import Encoder, Decoder
 from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 
 from ldm.util import instantiate_from_config
+
+from einops import rearrange
 
 
 class VQModel(pl.LightningModule):
@@ -54,6 +57,7 @@ class VQModel(pl.LightningModule):
             print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
 
         if ckpt_path is not None:
+            print('ckpt_path is', ckpt_path)
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         self.scheduler_config = scheduler_config
         self.lr_g_factor = lr_g_factor
@@ -440,7 +444,7 @@ class IdentityFirstStage(torch.nn.Module):
     def forward(self, x, *args, **kwargs):
         return x
 
-class VectorQuantizer(nn.Module):
+class VectorQuantizer(torch.nn.Module):
     """
     Improved version over VectorQuantizer, can be used as a drop-in replacement. Mostly
     avoids costly matrix multiplications and allows for post-hoc remapping of indices.
@@ -456,7 +460,7 @@ class VectorQuantizer(nn.Module):
         self.beta = beta
         self.legacy = legacy
 
-        self.embedding = nn.Embedding(self.n_e, self.e_dim)
+        self.embedding = torch.nn.Embedding(self.n_e, self.e_dim)
         self.embedding.weight.data.uniform_(-1.0 / self.n_e, 1.0 / self.n_e)
 
         self.remap = remap
