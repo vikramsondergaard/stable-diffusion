@@ -184,8 +184,8 @@ if __name__ == "__main__":
         val_dataset = VideoDataset(f'{os.getcwd()}/data/tiktok_videos/val')
         # Load data loaders
         print('Converting to dataloader...')
-        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-        val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=28)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers=28)
+        val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False)
         print('Instantiating diffusion model...')
         with open(os.path.join(os.getcwd(), 'configs', 'latent-diffusion', 'tiktok-dataset.yaml'), 'r') as tiktok_configs:
             config_file = yaml.safe_load(tiktok_configs)
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         # print('Training VAE...')
         # ae_trainer.fit(diffusion_model.first_stage_model, train_dataloaders=train_dataloader, ckpt_path=os.path.join(os.getcwd(), 'models', 'first_stage_models', 'tiktok'))
         # Now train the diffusion model
-        dm_trainer = pl.Trainer(max_epochs=50, default_root_dir=os.path.join(os.getcwd(), 'models', 'ldm', 'tiktok'))
+        dm_trainer = pl.Trainer(max_epochs=50, default_root_dir=os.path.join(os.getcwd(), 'models', 'ldm', 'tiktok'), accelerator='gpu', devices=2)
         print('Training latent diffusion model...')
         dm_trainer.fit(diffusion_model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
         # Set a default place to log the samples to
